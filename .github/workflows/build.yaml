@@ -1,40 +1,22 @@
-name: Build firmwares
-
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-jobs:
-  build:
-    name: Build firmware
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Initialize containers
-        run: echo "Initializing build containers..."
-
-      - name: Install SDK extensions
-        run: |
-          echo "Installing Silicon Labs SDK components..."
-
-      # Радикальное исправление прав Git для хоста и любых Docker-контейнеров
-      - name: Fix Git safe directory globally and system-wide
-        run: |
-          sudo chown -R $(whoami) .
-          git config --global --add safe.directory '*'
-          sudo git config --system --add safe.directory '*'
-
-      # Основной запуск компиляции с указанием манифеста
-      - name: Build firmware
-        run: python3 tools/build_project.py --manifest dsgw280.yaml
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: firmware-binaries
-          path: artifacts/
+metadata:
+  name: dsgw280
+  description: "OpenThread RCP 4.3.1 for Dusun DSGW-280 (EFR32MG21)"
+sdk:
+  version: 4.3.1
+device:
+  part: efr32mg21a010f768im32
+configuration:
+  components:
+    - id: ot_rcp
+    - id: uart_multiplex
+    - id: cpc_core
+    - id: iostream_usart
+      instance:
+        - vcom
+  configuration:
+    sl_iostream_usart_vcom_baudrate: 115200
+    sl_iostream_usart_vcom_flow_control_type: usartHwFlowControlNone
+    sl_iostream_usart_vcom_rx_port: gpioPortA
+    sl_iostream_usart_vcom_rx_pin: 6
+    sl_iostream_usart_vcom_tx_port: gpioPortA
+    sl_iostream_usart_vcom_tx_pin: 5
