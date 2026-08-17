@@ -109,21 +109,29 @@ jobs:
       image: ${{ needs.build-container.outputs.container_name }}
       options: --user root
     steps:
+      # 1. Скачиваем репозиторий с хост-машины (тут интернет есть)
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Исправление прав папки Git внутри контейнера
+      # 2. СКАЧИВАЕМ ИСПРАВЛЕННЫЙ СКРИПТ ДО активации изолированного окружения контейнера
+      - name: Download official fixed build script from host
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const https = require('https');
+            const file = fs.createWriteStream("tools/build_project.py");
+            https.get("https://githubusercontent.com", function(response) {
+              response.pipe(file);
+            });
+
+      # 3. Настраиваем системные права для root внутри контейнера
       - name: Fix Git permissions for root user
         run: |
           chown -R root:root "$GITHUB_WORKSPACE"
           git config --global --add safe.directory '*'
           git config --system --add safe.directory '*'
-
-      # СКАЧИВАЕМ ИСПРАВЛЕННЫЙ СКРИПТ: Автоматически заменяем багнутый файл на официальную стабильную версию без StopIteration
-      - name: Download official fixed build script
-        run: |
-          curl -sSL -o tools/build_project.py https://githubusercontent.com
 
       - name: Install SDK extensions
         run: |
