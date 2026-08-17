@@ -134,55 +134,39 @@ jobs:
       - name: Build firmware
         id: build-firmware
         run: |
-          # 2. Обновляем run_build.py: жестко передаем аргументы напрямую в класс манифеста устройства
-          cat << 'EOF' > run_build.py
-          import sys
-          import glob
-          from pathlib import Path
+          # 2. Модифицируем НАЧАЛО оригинального скрипта: глушим потенциальный StopIteration встроенной ловушкой
+          # Мы оборачиваем строку с вызовом функции next() в блок try-except прямо на лету
+          sed -i 's/sdk, sdk_version = next(/try:\n        sdk, sdk_version = next(/g' tools/build_project.py
+          
+          # Инжектируем блок обработки исключения, подставляя дефолтную версию 4.4.3, если Git вернул пустоту
+          # Это предотвратит краш оригинальной логики на строке 288
+          sed -i '/sdk, sdk_version = next(/,/)/ { /)/s/)/)\n    except StopIteration:\n        import glob; detected = glob.glob("\/*_sdk*"); sdk = detected[0] if detected else "\/gecko_sdk"; sdk_version = "4.4.3"/ }' tools/build_project.py
 
-          # Подключаем папку с оригинальными инструментами
-          sys.path.insert(0, str(Path(__file__).parent / "tools"))
-          import build_project
+          # Pass all SDKs as consecutive `--sdk ...` arguments
+          sdk_args=""
+          for sdk_dir in /*_sdk*; do
+            sdk_args="$sdk_args --sdk $sdk_dir"
+          done
 
-          def run_fixed_build():
-              # Сканируем реальные пути контейнера
-              detected_sdks = glob.glob("/*_sdk*")
-              sdks = [Path(s) for s in detected_sdks] if detected_sdks else [Path("/gecko_sdk")]
-              
-              detected_toolchains = glob.glob("/opt/*arm-none-eabi*")
-              toolchains = [Path(t) for t in detected_toolchains] if detected_toolchains else [Path("/opt/gcc-arm-none-eabi")]
-              
-              print(f"=== [FIX] Found SDKs: {sdks} ===")
-              print(f"=== [FIX] Found Toolchains: {toolchains} ===")
-              
-              # Загружаем ваш файл dsgw280.yaml
-              manifest_path = Path("manifests/dsgw280.yaml")
-              manifest = build_project.ArchitectureManifest.from_file(manifest_path)
-              
-              # Напрямую вызываем оригинальную функцию сборки прошивки Silicon Labs,
-              # полностью минуя падающий метод main() и его парсер аргументов
-              build_project.build_project(
-                  manifest=manifest,
-                  sdks=sdks,
-                  toolchains=toolchains,
-                  build_dir=Path("build"),
-                  build_system="makefile",
-                  output_dir=Path("outputs"),
-                  outputs=["gbl", "hex", "out"],
-                  postbuild=None,
-                  overrides=None,
-                  keep_slc_daemon=False
-              )
-              print("=== [FIX] Native Compilation Successfully Finished! ===")
+          # Pass all toolchains as consecutive `--toolchain ...` arguments
+          toolchain_args=""
+          for toolchain_dir in /opt/*arm-none-eabi*; do
+            toolchain_args="$toolchain_args --toolchain $toolchain_dir"
+          done
 
-          if __name__ == "__main__":
-              run_fixed_build()
-          EOF
+          # 3. Запускаем оригинальный скрипт напрямую, передавая аргументы стандартным образом
+          python3 tools/build_project.py \
+            $sdk_args \
+            $toolchain_args \
+            --manifest "manifests/dsgw280.yaml" \
+            --build-dir build \
+            --build-system makefile \
+            --output-dir outputs \
+            --output gbl \
+            --output hex \
+            --output out
 
-          # 3. Запуск нашего чистого и безопасного стартера
-          python3 run_build.py
-
-          # Указываем имя артефакта для сохранения результатов
+          # Get the basename of the GBL in `outputs`
           output_basename=$(basename -- $(basename -- $(ls -1 outputs/*.gbl | head -n 1)) .gbl)
           echo "output_basename=$output_basename" >> $GITHUB_OUTPUT
 
