@@ -115,6 +115,7 @@ jobs:
     needs: [list-manifests, build-container]
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         manifest: ${{ fromJson(needs.list-manifests.outputs.matrix) }}
     steps:
@@ -126,11 +127,10 @@ jobs:
           mkdir -p outputs
           sudo chown -R 1000:1000 .
 
-      # Запускаем сборку через Docker, явно вызывая python3 и скрипт сборщика внутри него
+      # Запускаем сборку через Docker с явным указанием путей для скрипта
       - name: Build firmware via Docker
         id: build-firmware
         run: |
-          # Внутри контейнера папка репозитория смонтирована в /repo
           docker run --rm \
             -v $(pwd):/repo \
             ${{ needs.build-container.outputs.container_name }} \
