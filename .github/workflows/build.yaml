@@ -106,18 +106,16 @@ jobs:
       image: ${{ needs.build-container.outputs.container_name }}
       options: --user root
     steps:
+      # Важное изменение: Скачиваем репозиторий полностью (включая все теги и историю)
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Системное исправление прав папки Git внутри контейнера
       - name: Fix Git safe directory
         run: |
           git config --system --add safe.directory '*'
           git config --global --add safe.directory '*'
-
-      # Точечное исправление бага StopIteration в самом скрипте Python на лету
-      - name: Patch Python build script bug
-        run: |
-          sed -i 's/sdk, sdk_version = next(/sdk, sdk_version = next(iter([]), (None, None))\n    _unused = next(/g' tools/build_project.py || true
 
       - name: Install SDK extensions
         run: |
@@ -143,7 +141,7 @@ jobs:
             toolchain_args="$toolchain_args --toolchain $toolchain_dir"
           done
 
-          # Запуск оригинального исправленного скрипта сборки под один ваш манифест
+          # Запуск оригинального скрипта сборщика
           python3 tools/build_project.py \
             $sdk_args \
             $toolchain_args \
