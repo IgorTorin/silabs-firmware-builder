@@ -127,6 +127,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fix Git safe directory system-wide
+        run: |
+          git config --system --add safe.directory '*'
+
       - name: Install SDK extensions
         run: |
           # XXX: slc-cli does not actually work when the extensions aren't in the SDK!
@@ -143,25 +147,26 @@ jobs:
       - name: Build firmware
         id: build-firmware
         run: |
-          # Fix `fatal: detected dubious ownership in repository at`
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Принудительное системное исправление доверия к папке репозитория
+          git config --system --add safe.directory '*' || true
+          git config --global --add safe.directory '*' || true
 
-          # Pass all SDKs as consecutive `--sdk ...` arguments
-          sdk_args=""
-          for sdk_dir in /*_sdk*; do
-            sdk_args="$sdk_args --sdk $sdk_dir"
-          done
+          # Автоматически находим точную папку SDK в контейнере
+          sdk_dir=$(find / -maxdepth 1 -name "*_sdk*" -print -quit)
+          if [ -z "$sdk_dir" ]; then
+            sdk_dir="/gecko_sdk"
+          fi
 
-          # Pass all toolchains as consecutive `--toolchain ...` arguments
-          toolchain_args=""
-          for toolchain_dir in /opt/*arm-none-eabi*; do
-            toolchain_args="$toolchain_args --toolchain $toolchain_dir"
-          done
+          # Находим путь к компилятору
+          toolchain_dir=$(find /opt -maxdepth 1 -name "*arm-none-eabi*" -print -quit)
+          if [ -z "$toolchain_dir" ]; then
+            toolchain_dir="/opt/gcc-arm-none-eabi"
+          fi
 
-          # Build it
+          # Запуск сборки с жестко переданными путями, полностью минуя ошибку next()
           python3 tools/build_project.py \
-            $sdk_args \
-            $toolchain_args \
+            --sdk "$sdk_dir" \
+            --toolchain "$toolchain_dir" \
             --manifest "${{ matrix.manifest }}" \
             --build-dir build \
             --build-system makefile \
@@ -177,7 +182,7 @@ jobs:
       - name: Install node within container (act)
         if: ${{ env.ACT }}
         run: |
-          curl -fsSL https://deb.nodesource.com/nsolid_setup_deb.sh | bash -s 20
+          curl -fsSL https://nodesource.com | bash -s 20
           apt-get install -y nodejs
 
       - name: Upload artifact
