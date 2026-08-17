@@ -118,10 +118,11 @@ jobs:
           git config --global --add safe.directory '*'
           git config --system --add safe.directory '*'
 
-      # 2. ИСПРАВЛЕНИЕ: Аккуратно глушим многострочный блок через тройные кавычки (открываем их на строке 288)
+      # 2. ИСПРАВЛЕНИЕ: Превращаем ломающуюся строку с next() в безопасный однострочный код, 
+      # а переменные 'sdk' и 'sdk_version' мы принудительно переопределим ниже!
       - name: Patch broken code locally
         run: |
-          sed -i 's/sdk, sdk_version = next(/import glob; sdk=glob.glob("\/*_sdk*")[0]; sdk_version="4.4.3"; """/g' tools/build_project.py
+          sed -i 's/sdk, sdk_version = next(/sdk, sdk_version = "dummy", "4.4.3"; int(0) or next(/g' tools/build_project.py
 
       - name: Install SDK extensions
         run: |
@@ -139,8 +140,8 @@ jobs:
       - name: Build firmware
         id: build-firmware
         run: |
-          # 3. Закрываем кавычки встроенного комментария прямо перед вызовом основного метода скрипта
-          sed -i 's/def build_project(/"""\ndef build_project(/g' tools/build_project.py
+          # 3. Принудительно выставляем жесткие пути к SDK в самом начале исполнения метода сборки
+          sed -i 's/def main()/def main():\n    global sdk, sdk_version\n    import glob\n    detected_sdks = glob.glob("\/*_sdk*")\n    sdk = detected_sdks[0] if detected_sdks else "\/gecko_sdk"\n    sdk_version = "4.4.3"/g' tools/build_project.py
 
           # Pass all SDKs as consecutive `--sdk ...` arguments
           sdk_args=""
