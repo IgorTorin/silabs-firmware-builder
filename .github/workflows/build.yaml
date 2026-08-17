@@ -134,76 +134,55 @@ jobs:
       - name: Build firmware
         id: build-firmware
         run: |
-          # 2. Создаем чистый изолированный стартер run_build.py, который полностью обходит баг
+          # 2. Обновляем run_build.py: жестко передаем аргументы напрямую в класс манифеста устройства
           cat << 'EOF' > run_build.py
           import sys
           import glob
-          import argparse
           from pathlib import Path
 
-          # Добавляем папку со скриптами в пути импорта Python
+          # Подключаем папку с оригинальными инструментами
           sys.path.insert(0, str(Path(__file__).parent / "tools"))
           import build_project
 
           def run_fixed_build():
-              # Динамически находим папку SDK внутри контейнера
+              # Сканируем реальные пути контейнера
               detected_sdks = glob.glob("/*_sdk*")
-              sdk_path = detected_sdks[0] if detected_sdks else "/gecko_sdk"
+              sdks = [Path(s) for s in detected_sdks] if detected_sdks else [Path("/gecko_sdk")]
               
-              print(f"=== [FIX] Injecting SDK path: {sdk_path} ===")
+              detected_toolchains = glob.glob("/opt/*arm-none-eabi*")
+              toolchains = [Path(t) for t in detected_toolchains] if detected_toolchains else [Path("/opt/gcc-arm-none-eabi")]
               
-              # Парсим родные аргументы командной строки
-              parser = build_project.parse_args()
-              args = parser.parse_args()
+              print(f"=== [FIX] Found SDKs: {sdks} ===")
+              print(f"=== [FIX] Found Toolchains: {toolchains} ===")
               
-              # Читаем конфигурационный файл (манифест) устройства dsgw280.yaml
-              manifest = build_project.ArchitectureManifest.from_file(Path(args.manifest))
+              # Загружаем ваш файл dsgw280.yaml
+              manifest_path = Path("manifests/dsgw280.yaml")
+              manifest = build_project.ArchitectureManifest.from_file(manifest_path)
               
-              # Запускаем оригинальную встроенную функцию компиляции из silabs-firmware-builder,
-              # передавая ей параметры напрямую и полностью перепрыгивая сломанный метод main()
+              # Напрямую вызываем оригинальную функцию сборки прошивки Silicon Labs,
+              # полностью минуя падающий метод main() и его парсер аргументов
               build_project.build_project(
                   manifest=manifest,
-                  sdks=[Path(sdk) for sdk in args.sdk],
-                  toolchains=[Path(t) for t in args.toolchain],
-                  build_dir=Path(args.build_dir),
-                  build_system=args.build_system,
-                  output_dir=Path(args.output_dir),
-                  outputs=args.output,
-                  postbuild=args.postbuild,
-                  overrides=args.override,
-                  keep_slc_daemon=args.keep_slc_daemon
+                  sdks=sdks,
+                  toolchains=toolchains,
+                  build_dir=Path("build"),
+                  build_system="makefile",
+                  output_dir=Path("outputs"),
+                  outputs=["gbl", "hex", "out"],
+                  postbuild=None,
+                  overrides=None,
+                  keep_slc_daemon=False
               )
-              print("=== [FIX] Build successfully finished! ===")
+              print("=== [FIX] Native Compilation Successfully Finished! ===")
 
           if __name__ == "__main__":
               run_fixed_build()
           EOF
 
-          # Pass all SDKs as consecutive `--sdk ...` arguments
-          sdk_args=""
-          for sdk_dir in /*_sdk*; do
-            sdk_args="$sdk_args --sdk $sdk_dir"
-          done
+          # 3. Запуск нашего чистого и безопасного стартера
+          python3 run_build.py
 
-          # Pass all toolchains as consecutive `--toolchain ...` arguments
-          toolchain_args=""
-          for toolchain_dir in /opt/*arm-none-eabi*; do
-            toolchain_args="$toolchain_args --toolchain $toolchain_dir"
-          done
-
-          # 3. Запускаем компиляцию через наш безопасный стартер вместо падающего файла
-          python3 run_build.py \
-            $sdk_args \
-            $toolchain_args \
-            --manifest "manifests/dsgw280.yaml" \
-            --build-dir build \
-            --build-system makefile \
-            --output-dir outputs \
-            --output gbl \
-            --output hex \
-            --output out
-
-          # Get the basename of the GBL in `outputs`
+          # Указываем имя артефакта для сохранения результатов
           output_basename=$(basename -- $(basename -- $(ls -1 outputs/*.gbl | head -n 1)) .gbl)
           echo "output_basename=$output_basename" >> $GITHUB_OUTPUT
 
