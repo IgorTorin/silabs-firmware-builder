@@ -118,10 +118,10 @@ jobs:
           git config --global --add safe.directory '*'
           git config --system --add safe.directory '*'
 
-      # 2. Локальное исправление кода без интернета и без нарушения синтаксиса YAML
+      # 2. ИСПРАВЛЕНИЕ: Аккуратно глушим многострочный блок через тройные кавычки (открываем их на строке 288)
       - name: Patch broken code locally
         run: |
-          sed -i 's/sdk, sdk_version = next(/import glob; sdk=glob.glob("\/*_sdk*")[0]; sdk_version="4.4.3"; #/g' tools/build_project.py
+          sed -i 's/sdk, sdk_version = next(/import glob; sdk=glob.glob("\/*_sdk*")[0]; sdk_version="4.4.3"; """/g' tools/build_project.py
 
       - name: Install SDK extensions
         run: |
@@ -139,6 +139,9 @@ jobs:
       - name: Build firmware
         id: build-firmware
         run: |
+          # 3. Закрываем кавычки встроенного комментария прямо перед вызовом основного метода скрипта
+          sed -i 's/def build_project(/"""\ndef build_project(/g' tools/build_project.py
+
           # Pass all SDKs as consecutive `--sdk ...` arguments
           sdk_args=""
           for sdk_dir in /*_sdk*; do
