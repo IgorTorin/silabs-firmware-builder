@@ -1,1 +1,42 @@
+metadata:
+  name: dsgw280
+  description: "Firmware for DSGW-280 Gateway with EFR32MG21"
+  version: "1.0.0"
+
+sdk:
+  version: "4.4.3"
+
+device:
+  part: efr32mg21a010f768im32
+  flash_size: 786432
+  ram_size: 65536
+
+configuration:
+  type: rcp
+  
+  components:
+    - id: sl_system
+    - id: device_init
+    - id: cpc_core
+    - id: uartdrv_usart
+      instance:
+        - vcom
+    - id: rail_util_pti
+    - id: iostream_usart
+      instance:
+        - vcom
+
+  overrides:
+    - key: SL_UARTDRV_USART_VCOM_PERIPHERAL
+      value: USART1
+    - key: SL_UARTDRV_USART_VCOM_TX_PORT
+      value: gpioPortA
+    - key: SL_UARTDRV_USART_VCOM_TX_PIN
+      value: 5
+    - key: SL_UARTDRV_USART_VCOM_RX_PORT
+      value: gpioPortA
+    - key: SL_UARTDRV_USART_VCOM_RX_PIN
+      value: 6
+    - key: SL_UARTDRV_USART_VCOM_BAUDRATE
+      value: 115200
 
