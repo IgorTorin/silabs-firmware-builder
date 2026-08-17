@@ -56,9 +56,12 @@ jobs:
           fi
 
           tag_name=$(echo "${{ hashFiles('Dockerfile') }}" | cut -c-16)
+
+          # Default to building a new container under the original repo
           image_name=$head_image
           build_image=true
 
+          # Check if we can use the base image (Nabu Casa)
           if docker manifest inspect ${{ env.REGISTRY }}/$base_image:$tag_name; then
             image_name=$base_image
             build_image=false
@@ -110,24 +113,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Системное исправление прав папки Git внутри контейнера
-      - name: Fix Git safe directory
+      # ЕДИНСТВЕННОЕ ИСПРАВЛЕНИЕ: Делаем root полноценным владельцем всех файлов на диске и убираем паранойю Git
+      - name: Fix Git permissions for root user
         run: |
-          git config --system --add safe.directory '*'
-          git config --global --add safe.directory '*'
-
-      # Находим точное имя папки SDK в корне и принудительно заменяем падающую строку 288 в скрипте Python
-      - name: Patch SDK version lookup bug
-        run: |
-          REAL_SDK_DIR=$(find / -maxdepth 1 -name "*_sdk*" -print -quit)
-          echo "Detected SDK Directory: $REAL_SDK_DIR"
-          sed -i "s/sdk, sdk_version = next(/sdk, sdk_version = ('$REAL_SDK_DIR', '4.4.3')\n    _unused = next(/g" tools/build_project.py || true
+          chown -R root:root "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install SDK extensions
         run: |
+          # XXX: slc-cli does not actually work when the extensions aren't in the SDK!
           for sdk in /*_sdk_*; do
             slc signature trust --sdk "$sdk"
+
             ln -s $PWD/gecko_sdk_extensions "$sdk"/extension
+
             for ext in "$sdk"/extension/*/; do
               slc signature trust --sdk "$sdk" --extension-path "$ext"
             done
@@ -136,22 +136,23 @@ jobs:
       - name: Build firmware
         id: build-firmware
         run: |
-          # Автоматический сбор папок SDK и Toolchain, заложенный авторами
+          # Pass all SDKs as consecutive `--sdk ...` arguments
           sdk_args=""
           for sdk_dir in /*_sdk*; do
             sdk_args="$sdk_args --sdk $sdk_dir"
           done
 
+          # Pass all toolchains as consecutive `--toolchain ...` arguments
           toolchain_args=""
           for toolchain_dir in /opt/*arm-none-eabi*; do
             toolchain_args="$toolchain_args --toolchain $toolchain_dir"
           done
 
-          # Запуск оригинального скрипта сборщика с обходом бага
+          # Родной, неизмененный запуск оригинального скрипта сборщика
           python3 tools/build_project.py \
             $sdk_args \
             $toolchain_args \
-            --manifest manifests/dsgw280.yaml \
+            --manifest "manifests/dsgw280.yaml" \
             --build-dir build \
             --build-system makefile \
             --output-dir outputs \
@@ -159,8 +160,15 @@ jobs:
             --output hex \
             --output out
 
+          # Get the basename of the GBL in `outputs`
           output_basename=$(basename -- $(basename -- $(ls -1 outputs/*.gbl | head -n 1)) .gbl)
           echo "output_basename=$output_basename" >> $GITHUB_OUTPUT
+
+      - name: Install node within container (act)
+        if: ${{ env.ACT }}
+        run: |
+          curl -fsSL https://nodesource.com | bash -s 20
+          apt-get install -y nodejs
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -168,7 +176,7 @@ jobs:
           name: firmware-build-${{ steps.build-firmware.outputs.output_basename }}
           path: outputs/*
           compression-level: 9
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release-assets:
     name: Upload release assets
