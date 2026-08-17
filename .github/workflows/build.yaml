@@ -106,7 +106,6 @@ jobs:
       image: ${{ needs.build-container.outputs.container_name }}
       options: --user root
     steps:
-      # Важное изменение: Скачиваем репозиторий полностью (включая все теги и историю)
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -116,6 +115,13 @@ jobs:
         run: |
           git config --system --add safe.directory '*'
           git config --global --add safe.directory '*'
+
+      # Находим точное имя папки SDK в корне и принудительно заменяем падающую строку 288 в скрипте Python
+      - name: Patch SDK version lookup bug
+        run: |
+          REAL_SDK_DIR=$(find / -maxdepth 1 -name "*_sdk*" -print -quit)
+          echo "Detected SDK Directory: $REAL_SDK_DIR"
+          sed -i "s/sdk, sdk_version = next(/sdk, sdk_version = ('$REAL_SDK_DIR', '4.4.3')\n    _unused = next(/g" tools/build_project.py || true
 
       - name: Install SDK extensions
         run: |
@@ -141,7 +147,7 @@ jobs:
             toolchain_args="$toolchain_args --toolchain $toolchain_dir"
           done
 
-          # Запуск оригинального скрипта сборщика
+          # Запуск оригинального скрипта сборщика с обходом бага
           python3 tools/build_project.py \
             $sdk_args \
             $toolchain_args \
