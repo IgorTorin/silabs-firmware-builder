@@ -22,11 +22,14 @@ jobs:
         run: |
           echo "Installing Silicon Labs SDK components..."
 
-      # Исправление ошибки с правами репозитория внутри Docker (dubious ownership)
-      - name: Fix Git safe directory
-        run: git config --global --add safe.directory '*'
+      # Радикальное исправление прав Git для хоста и любых Docker-контейнеров
+      - name: Fix Git safe directory globally and system-wide
+        run: |
+          sudo chown -R $(whoami) .
+          git config --global --add safe.directory '*'
+          sudo git config --system --add safe.directory '*'
 
-      # Основной запуск компиляции вашей прошивки с указанием файла конфигурации
+      # Основной запуск компиляции с указанием манифеста
       - name: Build firmware
         run: python3 tools/build_project.py --manifest dsgw280.yaml
 
