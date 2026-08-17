@@ -57,17 +57,14 @@ jobs:
 
           tag_name=$(echo "${{ hashFiles('Dockerfile') }}" | cut -c-16)
 
-          # Default to building a new container under the original repo
           image_name=$head_image
           build_image=true
 
-          # Check if we can use the base image (Nabu Casa)
           if docker manifest inspect ${{ env.REGISTRY }}/$base_image:$tag_name; then
             image_name=$base_image
             build_image=false
           fi
 
-          # Check if we can use the head image (if this is a PR)
           if [[ $base_image != $head_image ]]; then
             if docker manifest inspect ${{ env.REGISTRY }}/$head_image:$tag_name; then
               image_name=$head_image
@@ -102,7 +99,6 @@ jobs:
       image_name: ${{ steps.read-repo-info.outputs.image_name }}
       container_name: ${{ steps.read-repo-info.outputs.container_name }}
 
-
   list-manifests:
     name: List firmware manifests
     runs-on: ubuntu-latest
@@ -118,55 +114,22 @@ jobs:
     name: Firmware builder
     needs: [list-manifests, build-container]
     runs-on: ubuntu-latest
-    container:
-      image: ${{ needs.build-container.outputs.container_name }}
-      options: --user root
-    strategy:
-      matrix:
-        manifest: ${{ fromJson(needs.list-manifests.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fix Git safe directory system-wide
+      # Очищаем права на папки перед запуском Docker
+      - name: Prepare workspace permissions
         run: |
-          git config --system --add safe.directory '*'
+          mkdir -p outputs
+          sudo chown -R 1000:1000 .
 
-      - name: Install SDK extensions
-        run: |
-          # XXX: slc-cli does not actually work when the extensions aren't in the SDK!
-          for sdk in /*_sdk_*; do
-            slc signature trust --sdk "$sdk"
-
-            ln -s $PWD/gecko_sdk_extensions "$sdk"/extension
-
-            for ext in "$sdk"/extension/*/; do
-              slc signature trust --sdk "$sdk" --extension-path "$ext"
-            done
-          done
-
-      - name: Build firmware
+      # Запускаем сборку напрямую через изолированный Docker-контейнер
+      - name: Build firmware via Docker
         id: build-firmware
         run: |
-          # Принудительное системное исправление доверия к папке репозитория
-          git config --system --add safe.directory '*' || true
-          git config --global --add safe.directory '*' || true
-
-          # Автоматически находим точную папку SDK в контейнере
-          sdk_dir=$(find / -maxdepth 1 -name "*_sdk*" -print -quit)
-          if [ -z "$sdk_dir" ]; then
-            sdk_dir="/gecko_sdk"
-          fi
-
-          # Находим путь к компилятору
-          toolchain_dir=$(find /opt -maxdepth 1 -name "*arm-none-eabi*" -print -quit)
-          if [ -z "$toolchain_dir" ]; then
-            toolchain_dir="/opt/gcc-arm-none-eabi"
-          fi
-
-          # Запуск сборки с жестко переданными путями, полностью минуя ошибку next()
-          python3 tools/build_project.py \
-            --sdk "$sdk_dir" \
-            --toolchain "$toolchain_dir" \
+          docker run --rm \
+            -v $(pwd):/repo \
+            ${{ needs.build-container.outputs.container_name }} \
             --manifest "${{ matrix.manifest }}" \
             --build-dir build \
             --build-system makefile \
@@ -175,15 +138,9 @@ jobs:
             --output hex \
             --output out
 
-          # Get the basename of the GBL in `outputs`
+          sudo chown -R $(whoami) outputs
           output_basename=$(basename -- $(basename -- $(ls -1 outputs/*.gbl | head -n 1)) .gbl)
           echo "output_basename=$output_basename" >> $GITHUB_OUTPUT
-
-      - name: Install node within container (act)
-        if: ${{ env.ACT }}
-        run: |
-          curl -fsSL https://nodesource.com | bash -s 20
-          apt-get install -y nodejs
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
