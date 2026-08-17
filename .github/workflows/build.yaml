@@ -134,27 +134,49 @@ jobs:
       - name: Build firmware
         id: build-firmware
         run: |
-          # 2. Переопределяем метод main() прямо в конце файла скрипта, полностью изолируя баг
-          cat << 'EOF' >> tools/build_project.py
+          # 2. Создаем чистый изолированный стартер run_build.py, который полностью обходит баг
+          cat << 'EOF' > run_build.py
+          import sys
+          import glob
+          import argparse
+          from pathlib import Path
 
-          # Переопределяем падающий метод main
-          original_main = main
-          def safe_main():
-              import glob
-              # Динамически подменяем внутренние глобальные переменные скрипта на валидные пути
-              import tools.build_project as bp
+          # Добавляем папку со скриптами в пути импорта Python
+          sys.path.insert(0, str(Path(__file__).parent / "tools"))
+          import build_project
+
+          def run_fixed_build():
+              # Динамически находим папку SDK внутри контейнера
               detected_sdks = glob.glob("/*_sdk*")
-              bp.sdk = detected_sdks[0] if detected_sdks else "/gecko_sdk"
-              bp.sdk_version = "4.4.3"
+              sdk_path = detected_sdks[0] if detected_sdks else "/gecko_sdk"
               
-              # Запускаем оригинальную логику, которая теперь увидит корректные переменные
-              try:
-                  original_main()
-              except StopIteration:
-                  # Дополнительная защита на случай, если next() вызовется где-то еще
-                  pass
+              print(f"=== [FIX] Injecting SDK path: {sdk_path} ===")
+              
+              # Парсим родные аргументы командной строки
+              parser = build_project.parse_args()
+              args = parser.parse_args()
+              
+              # Читаем конфигурационный файл (манифест) устройства dsgw280.yaml
+              manifest = build_project.ArchitectureManifest.from_file(Path(args.manifest))
+              
+              # Запускаем оригинальную встроенную функцию компиляции из silabs-firmware-builder,
+              # передавая ей параметры напрямую и полностью перепрыгивая сломанный метод main()
+              build_project.build_project(
+                  manifest=manifest,
+                  sdks=[Path(sdk) for sdk in args.sdk],
+                  toolchains=[Path(t) for t in args.toolchain],
+                  build_dir=Path(args.build_dir),
+                  build_system=args.build_system,
+                  output_dir=Path(args.output_dir),
+                  outputs=args.output,
+                  postbuild=args.postbuild,
+                  overrides=args.override,
+                  keep_slc_daemon=args.keep_slc_daemon
+              )
+              print("=== [FIX] Build successfully finished! ===")
 
-          main = safe_main
+          if __name__ == "__main__":
+              run_fixed_build()
           EOF
 
           # Pass all SDKs as consecutive `--sdk ...` arguments
@@ -169,8 +191,8 @@ jobs:
             toolchain_args="$toolchain_args --toolchain $toolchain_dir"
           done
 
-          # Запуск оригинального, теперь уже локально исправленного скрипта сборщика
-          python3 tools/build_project.py \
+          # 3. Запускаем компиляцию через наш безопасный стартер вместо падающего файла
+          python3 run_build.py \
             $sdk_args \
             $toolchain_args \
             --manifest "manifests/dsgw280.yaml" \
