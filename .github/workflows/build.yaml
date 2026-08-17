@@ -114,26 +114,31 @@ jobs:
     name: Firmware builder
     needs: [list-manifests, build-container]
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        manifest: ${{ fromJson(needs.list-manifests.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
-      # Очищаем права на папки перед запуском Docker
+      # Подготовка рабочих папок на чистом хосте
       - name: Prepare workspace permissions
         run: |
           mkdir -p outputs
           sudo chown -R 1000:1000 .
 
-      # Запускаем сборку напрямую через изолированный Docker-контейнер
+      # Запускаем сборку через Docker, явно вызывая python3 и скрипт сборщика внутри него
       - name: Build firmware via Docker
         id: build-firmware
         run: |
+          # Внутри контейнера папка репозитория смонтирована в /repo
           docker run --rm \
             -v $(pwd):/repo \
             ${{ needs.build-container.outputs.container_name }} \
-            --manifest "${{ matrix.manifest }}" \
-            --build-dir build \
+            python3 /repo/tools/build_project.py \
+            --manifest "/repo/${{ matrix.manifest }}" \
+            --build-dir /repo/build \
             --build-system makefile \
-            --output-dir outputs \
+            --output-dir /repo/outputs \
             --output gbl \
             --output hex \
             --output out
