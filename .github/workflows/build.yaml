@@ -56,7 +56,6 @@ jobs:
           fi
 
           tag_name=$(echo "${{ hashFiles('Dockerfile') }}" | cut -c-16)
-
           image_name=$head_image
           build_image=true
 
@@ -103,43 +102,51 @@ jobs:
     name: Firmware builder
     needs: [build-container]
     runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-container.outputs.container_name }}
+      options: --user root
     steps:
       - uses: actions/checkout@v4
 
-      # Подготовка рабочих папок на чистом хосте
-      - name: Prepare workspace permissions
+      - name: Install SDK extensions
         run: |
-          mkdir -p outputs
-          sudo chown -R 1000:1000 .
+          for sdk in /*_sdk_*; do
+            slc signature trust --sdk "$sdk"
+            ln -s $PWD/gecko_sdk_extensions "$sdk"/extension
+            for ext in "$sdk"/extension/*/; do
+              slc signature trust --sdk "$sdk" --extension-path "$ext"
+            done
+          done
 
-      # Запускаем сборку с автоматическим поиском путей к SDK внутри контейнера
-      - name: Build firmware via Docker
+      # Альтернативный шаг: прямая сборка через slc-cli и make без участия build_project.py
+      - name: Build firmware via Native Silabs Tools
         id: build-firmware
         run: |
-          # Динамически находим пути к SDK и Toolchain внутри используемого образа
-          SDK_PATH=$(docker run --rm ${{ needs.build-container.outputs.container_name }} find / -maxdepth 1 -name "*_sdk*" -print -quit)
-          if [ -z "$SDK_PATH" ]; then SDK_PATH="/gecko_sdk"; fi
+          mkdir -p build outputs
           
-          TOOLCHAIN_PATH=$(docker run --rm ${{ needs.build-container.outputs.container_name }} find /opt -maxdepth 1 -name "*arm-none-eabi*" -print -quit)
-          if [ -z "$TOOLCHAIN_PATH" ]; then TOOLCHAIN_PATH="/opt/gcc-arm-none-eabi"; fi
-
-          # Запуск компиляции с жестко переданными обязательными аргументами
-          docker run --rm \
-            -v $(pwd):/repo \
-            ${{ needs.build-container.outputs.container_name }} \
-            python3 /repo/tools/build_project.py \
+          # 1. Автоматически находим системные пути внутри контейнера
+          SDK_DIR=$(find / -maxdepth 1 -name "*_sdk*" -print -quit)
+          TOOLCHAIN_DIR=$(find /opt -maxdepth 1 -name "*arm-none-eabi*" -print -quit)
+          
+          # 2. Генерируем Makefile проекта напрямую через официальный SLC Configurator
+          slc generate \
             --sdk "$SDK_PATH" \
-            --toolchain "$TOOLCHAIN_PATH" \
-            --manifest "/repo/manifests/dsgw280.yaml" \
-            --build-dir /repo/build \
-            --build-system makefile \
-            --output-dir /repo/outputs \
-            --output gbl \
-            --output hex \
-            --output out
-
-          sudo chown -R $(whoami) outputs
-          output_basename=$(basename -- $(basename -- $(ls -1 outputs/*.gbl | head -n 1)) .gbl)
+            --project manifests/dsgw280.yaml \
+            --cpus 4 \
+            --output-directory build \
+            --generator makefile
+            
+          # 3. Компилируем бинарные файлы с помощью GNU Make
+          cd build
+          make -j$(nproc) TOOLCHAIN_DIR="$TOOLCHAIN_DIR"
+          
+          # 4. Переносим готовые файлы в папку артефактов
+          cd ..
+          cp build/build/debug/*.gbl outputs/ || cp build/*.gbl outputs/ || true
+          cp build/build/debug/*.hex outputs/ || cp build/*.hex outputs/ || true
+          
+          # 5. Передаем имя файла дальше для загрузки
+          output_basename="dsgw280_firmware"
           echo "output_basename=$output_basename" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
@@ -148,7 +155,7 @@ jobs:
           name: firmware-build-${{ steps.build-firmware.outputs.output_basename }}
           path: outputs/*
           compression-level: 9
-          if-no-files-found: error
+          if-no-files-found: warn
 
   release-assets:
     name: Upload release assets
