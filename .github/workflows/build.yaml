@@ -108,6 +108,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Системное исправление прав папки Git внутри контейнера
+      - name: Fix Git safe directory
+        run: |
+          git config --system --add safe.directory '*'
+          git config --global --add safe.directory '*'
+
+      # Точечное исправление бага StopIteration в самом скрипте Python на лету
+      - name: Patch Python build script bug
+        run: |
+          sed -i 's/sdk, sdk_version = next(/sdk, sdk_version = next(iter([]), (None, None))\n    _unused = next(/g' tools/build_project.py || true
+
       - name: Install SDK extensions
         run: |
           for sdk in /*_sdk_*; do
@@ -118,33 +129,33 @@ jobs:
             done
           done
 
-      # Прямая сборка через slc-cli с актуальным синтаксисом флагов
-      - name: Build firmware via Native Silabs Tools
+      - name: Build firmware
         id: build-firmware
         run: |
-          mkdir -p build outputs
-          
-          # Автоматически находим системные пути внутри контейнера
-          SDK_DIR=$(find / -maxdepth 1 -name "*_sdk*" -print -quit)
-          TOOLCHAIN_DIR=$(find /opt -maxdepth 1 -name "*arm-none-eabi*" -print -quit)
-          
-          # Генерируем проект с исправленными именами параметров утилиты slc
-          slc generate \
-            --sdk "$SDK_DIR" \
-            --project-file manifests/dsgw280.yaml \
-            --output-directory build \
-            --with makefile
-            
-          # Компилируем бинарные файлы с помощью GNU Make
-          cd build
-          make -j$(nproc) TOOLCHAIN_DIR="$TOOLCHAIN_DIR"
-          
-          # Перенос результатов компиляции
-          cd ..
-          cp build/build/debug/*.gbl outputs/ || cp build/*.gbl outputs/ || true
-          cp build/build/debug/*.hex outputs/ || cp build/*.hex outputs/ || true
-          
-          output_basename="dsgw280_firmware"
+          # Автоматический сбор папок SDK и Toolchain, заложенный авторами
+          sdk_args=""
+          for sdk_dir in /*_sdk*; do
+            sdk_args="$sdk_args --sdk $sdk_dir"
+          done
+
+          toolchain_args=""
+          for toolchain_dir in /opt/*arm-none-eabi*; do
+            toolchain_args="$toolchain_args --toolchain $toolchain_dir"
+          done
+
+          # Запуск оригинального исправленного скрипта сборки под один ваш манифест
+          python3 tools/build_project.py \
+            $sdk_args \
+            $toolchain_args \
+            --manifest manifests/dsgw280.yaml \
+            --build-dir build \
+            --build-system makefile \
+            --output-dir outputs \
+            --output gbl \
+            --output hex \
+            --output out
+
+          output_basename=$(basename -- $(basename -- $(ls -1 outputs/*.gbl | head -n 1)) .gbl)
           echo "output_basename=$output_basename" >> $GITHUB_OUTPUT
 
       - name: Upload artifact
