@@ -113,29 +113,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Исправление прав Git для пользователя root
+      # Исправление прав папки Git внутри контейнера
       - name: Fix Git permissions for root user
         run: |
           chown -R root:root "$GITHUB_WORKSPACE"
           git config --global --add safe.directory '*'
           git config --system --add safe.directory '*'
 
-      # ТРЮК: Превращаем папку SDK в псевдо-Git репозиторий с нужной версией, 
-      # чтобы оригинальный скрипт не падал на функции next()
-      - name: Mock Git repository inside Simplicity SDK
+      # СКАЧИВАЕМ ИСПРАВЛЕННЫЙ СКРИПТ: Автоматически заменяем багнутый файл на официальную стабильную версию без StopIteration
+      - name: Download official fixed build script
         run: |
-          for sdk in /*_sdk_*; do
-            if [ -d "$sdk" ]; then
-              cd "$sdk"
-              git init
-              git config user.name "Builder"
-              git config user.email "builder@internal.com"
-              git add -A || true
-              git commit -m "Mock SDK commit" || true
-              git tag -a v4.4.3 -m "Mock version"
-              cd "$GITHUB_WORKSPACE"
-            fi
-          done
+          curl -sSL -o tools/build_project.py https://githubusercontent.com
 
       - name: Install SDK extensions
         run: |
@@ -165,7 +153,7 @@ jobs:
             toolchain_args="$toolchain_args --toolchain $toolchain_dir"
           done
 
-          # Родной, полностью оригинальный запуск скрипта silabs-firmware-builder
+          # Запуск стабильного официального скрипта сборщика
           python3 tools/build_project.py \
             $sdk_args \
             $toolchain_args \
