@@ -38,12 +38,14 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
       - name: Log in to the GitHub container registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Read repository information
         id: read-repo-info
         run: |
@@ -81,9 +83,11 @@ jobs:
           echo "tag_name=$tag_name" >> $GITHUB_OUTPUT
           echo "image_name=$image_name" >> $GITHUB_OUTPUT
           echo "container_name=${{ env.REGISTRY }}/$image_name:$tag_name" >> $GITHUB_OUTPUT
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         if: steps.read-repo-info.outputs.build_image == 'true'
+
       - name: Build and Push
         uses: docker/build-push-action@v6
         if: steps.read-repo-info.outputs.build_image == 'true'
@@ -94,6 +98,7 @@ jobs:
           cache-from: ${{ env.REGISTRY }}/${{ steps.read-repo-info.outputs.image_name }}:cache-${{ steps.read-repo-info.outputs.tag_name }}
           cache-to: ${{ env.REGISTRY }}/${{ steps.read-repo-info.outputs.image_name }}:cache-${{ steps.read-repo-info.outputs.tag_name }}
           push: true
+
     outputs:
       tag_name: ${{ steps.read-repo-info.outputs.tag_name }}
       image_name: ${{ steps.read-repo-info.outputs.image_name }}
@@ -106,12 +111,12 @@ jobs:
     container:
       image: ${{ needs.build-container.outputs.container_name }}
       options: --user root
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 1. Настраиваем системные права для root внутри контейнера
       - name: Fix Git permissions for root user
         run: |
           chown -R root:root "$GITHUB_WORKSPACE"
@@ -120,12 +125,9 @@ jobs:
 
       - name: Install SDK extensions
         run: |
-          # XXX: slc-cli does not actually work when the extensions aren't in the SDK!
           for sdk in /*_sdk_*; do
             slc signature trust --sdk "$sdk"
-
             ln -s $PWD/gecko_sdk_extensions "$sdk"/extension
-
             for ext in "$sdk"/extension/*/; do
               slc signature trust --sdk "$sdk" --extension-path "$ext"
             done
@@ -134,27 +136,18 @@ jobs:
       - name: Build firmware
         id: build-firmware
         run: |
-          # 2. Модифицируем НАЧАЛО оригинального скрипта: глушим потенциальный StopIteration встроенной ловушкой
-          # Мы оборачиваем строку с вызовом функции next() в блок try-except прямо на лету
-          sed -i 's/sdk, sdk_version = next(/try:\n        sdk, sdk_version = next(/g' tools/build_project.py
-          
-          # Инжектируем блок обработки исключения, подставляя дефолтную версию 4.4.3, если Git вернул пустоту
-          # Это предотвратит краш оригинальной логики на строке 288
-          sed -i '/sdk, sdk_version = next(/,/)/ { /)/s/)/)\n    except StopIteration:\n        import glob; detected = glob.glob("\/*_sdk*"); sdk = detected[0] if detected else "\/gecko_sdk"; sdk_version = "4.4.3"/ }' tools/build_project.py
+          patch -p1 < tools/build_project.patch
 
-          # Pass all SDKs as consecutive `--sdk ...` arguments
           sdk_args=""
           for sdk_dir in /*_sdk*; do
             sdk_args="$sdk_args --sdk $sdk_dir"
           done
 
-          # Pass all toolchains as consecutive `--toolchain ...` arguments
           toolchain_args=""
           for toolchain_dir in /opt/*arm-none-eabi*; do
             toolchain_args="$toolchain_args --toolchain $toolchain_dir"
           done
 
-          # 3. Запускаем оригинальный скрипт напрямую, передавая аргументы стандартным образом
           python3 tools/build_project.py \
             $sdk_args \
             $toolchain_args \
@@ -166,15 +159,8 @@ jobs:
             --output hex \
             --output out
 
-          # Get the basename of the GBL in `outputs`
           output_basename=$(basename -- $(basename -- $(ls -1 outputs/*.gbl | head -n 1)) .gbl)
           echo "output_basename=$output_basename" >> $GITHUB_OUTPUT
-
-      - name: Install node within container (act)
-        if: ${{ env.ACT }}
-        run: |
-          curl -fsSL https://nodesource.com | bash -s 20
-          apt-get install -y nodejs
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -191,6 +177,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Download all workflow artifacts
         uses: actions/download-artifact@v4
