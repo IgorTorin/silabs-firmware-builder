@@ -1,0 +1,13 @@
+--- a/tools/build_project.py
++++ b/tools/build_project.py
+@@ -285,7 +285,23 @@ def build_project(...):
+-    sdk, sdk_version = next(sdk_iter)
++    # --- BEGIN: StopIteration guard injected by CI workflow ---
++    try:
++        sdk, sdk_version = next(sdk_iter)
++    except StopIteration:
++        import glob
++        detected = glob.glob("/*_sdk*")
++        sdk = detected[0] if detected else "/gecko_sdk"
++        sdk_version = "4.4.3"
++    # --- END: StopIteration guard injected by CI workflow ---
